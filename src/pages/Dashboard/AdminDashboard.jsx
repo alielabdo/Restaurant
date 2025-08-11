@@ -2,9 +2,11 @@ import { NavLink, Routes, Route } from 'react-router-dom';
 
 import { useState } from 'react';
 import AI from './AI';
-import Statistics from './Statistics';
+import Statistics from "./Statistics/Statistics";
+
 import CreateUser from './CreateUser';
 import ManageMenu from './ManageMenu';
+import ViewCustomers from './ViewCustomer';
 
 export default function AdminDashboard() {
   const [isOpen, setIsOpen] = useState(true);
@@ -31,7 +33,7 @@ export default function AdminDashboard() {
   {[
     { name: 'AI', to: '/AdminDashboard/ai' },
     { name: 'Statistics', to: '/AdminDashboard/statistics' },
-    { name: 'Create User', to: '/AdminDashboard/create-user' },
+    { name: 'Customer', to: '/AdminDashboard/ViewCustomer' },
     { name: 'Menu', to: '/AdminDashboard/menu' },
   ].map(({ name, to }) => (
     <li className="nav-item mb-2" key={name}>
@@ -60,10 +62,11 @@ export default function AdminDashboard() {
         <Routes>
           <Route path="ai" element={<AI />} />
           <Route path="statistics" element={<Statistics />} />
-          <Route path="create-user" element={<CreateUser />} />
+          <Route path="ViewCustomer" element={<ViewCustomers />} />
+          <Route path="create_user" element={<CreateUser />} /> 
           <Route path="menu" element={<ManageMenu />} />
         </Routes>
-      </div>
+      </div>  
     </div>
   );
 }
