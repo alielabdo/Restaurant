@@ -9,9 +9,73 @@ from datetime import datetime, timedelta, timezone
 from pymongo import MongoClient
 from difflib import get_close_matches
 import re
+import google.generativeai as genai
+from pydantic_ai import Agent, RunContext
+from textwrap import dedent
 
 # Load env vars
 load_dotenv("../.env")  # Load from parent directory (root) since script runs from backend/
+
+# --- Google Gemini Configuration ---
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+if GOOGLE_API_KEY:
+    genai.configure(api_key=GOOGLE_API_KEY)
+    gemini_model = "gemini-1.5-flash"  # Using the latest stable model
+    print("Google Gemini API configured successfully")
+else:
+    print("Warning: GOOGLE_API_KEY not set, Gemini features will be disabled")
+    gemini_model = None
+
+# --- Pydantic Models for Gemini Agent ---
+class RecipeRequest(BaseModel):
+    dish_name: str
+    ingredients: List[str]
+    instructions: str
+    cooking_time: str
+    difficulty: str
+
+class InventoryCheck(BaseModel):
+    available_ingredients: List[str]
+    missing_ingredients: List[str]
+    low_stock_ingredients: List[str]
+    summary: str
+
+class TrendingAnalysis(BaseModel):
+    popular_dishes: List[str]
+    trending_patterns: str
+    recommendations: str
+
+# --- Gemini Agent Setup ---
+def create_gemini_agent():
+    """Create and configure the Gemini agent for restaurant queries"""
+    if not gemini_model:
+        return None
+    
+    system_prompt = dedent("""
+    You are an expert restaurant AI assistant specializing in:
+    1. Recipe creation and modification
+    2. Ingredient analysis and substitution
+    3. Cooking techniques and best practices
+    4. Restaurant inventory management
+    5. Food trends and recommendations
+    
+    Always provide accurate, helpful, and practical information.
+    When analyzing ingredients, be specific about quantities and alternatives.
+    For recipes, include clear step-by-step instructions.
+    When checking inventory, provide detailed availability status.
+    
+    Focus only on restaurant and food-related topics.
+    """)
+    
+    try:
+        agent = Agent(
+            gemini_model,
+            system_prompt=system_prompt,
+        )
+        return agent
+    except Exception as e:
+        print(f"Failed to create Gemini agent: {e}")
+        return None
 
 # --- MongoDB Client ---
 try:
@@ -188,7 +252,7 @@ def get_recent_trending(days=3):
         print(f"Error getting trending: {e}")
         return []
 
-# --- Web Search Fallback (Replaced Bing with DuckDuckGo and Google Custom Search) ---
+# --- Web Search Fallback (DuckDuckGo) ---
 def duckduckgo_search(query: str) -> str:
     """Free search using DuckDuckGo Instant Answer API"""
     try:
@@ -227,8 +291,6 @@ def duckduckgo_search(query: str) -> str:
     except Exception as e:
         print(f"DuckDuckGo search failed: {e}")
         return None
-
-# Google Custom Search removed - using only DuckDuckGo for simplicity
 
 def web_search(query: str) -> str:
     """Web search using DuckDuckGo Instant Answer API"""
@@ -422,13 +484,11 @@ def analyze_ingredients(required_ingredients: List[str], inventory: Dict[str, in
     
     return " | ".join(response_parts)
 
-
 def _generate_ngrams(tokens: List[str], n: int = 2) -> Set[str]:
     ngrams: Set[str] = set()
     for i in range(len(tokens) - n + 1):
         ngrams.add(" ".join(tokens[i : i + n]))
     return ngrams
-
 
 def analyze_inventory_query(user_text: str, inventory: Dict[str, int]) -> str:
     """Answer direct inventory questions for specific items mentioned in the text."""
@@ -476,6 +536,157 @@ def analyze_inventory_query(user_text: str, inventory: Dict[str, int]) -> str:
     parts = [f"{name}: {qty}" for name, qty in matched]
     return " | ".join(parts)
 
+# --- Enhanced Gemini-Powered Functions ---
+async def get_recipe_with_gemini(dish: str, user_text: str, inventory: Dict[str, int]) -> str:
+    """Get recipe using Gemini AI with web search fallback"""
+    agent = create_gemini_agent()
+    
+    if not agent:
+        # Fallback to original method if Gemini is not available
+        return await get_recipe_with_fallback(dish, user_text, inventory)
+    
+    try:
+        # First, try web search for latest information
+        web_result = web_search(dish)
+        
+        # Create enhanced prompt for Gemini
+        prompt = dedent(f"""
+        You are a professional chef and restaurant consultant. The user is asking about: {dish}
+        
+        If web search provided information, use it as a base but enhance it with your culinary expertise.
+        If no web search results, create a comprehensive recipe from your knowledge.
+        
+        Web search result: {web_result if web_result else 'No web results available'}
+        
+        Please provide a detailed recipe for {dish} including:
+        1. List of ingredients with quantities
+        2. Step-by-step cooking instructions
+        3. Cooking tips and best practices
+        4. Estimated cooking time
+        5. Difficulty level
+        
+        Make the response engaging, professional, and easy to follow.
+        """)
+        
+        # Get response from Gemini
+        result = agent.run_sync(prompt, output_type=RecipeRequest)
+        
+        # Format the response
+        recipe_response = f"""
+🍽️ **{result.output.dish_name.title()} Recipe**
+
+📋 **Ingredients:**
+{', '.join(result.output.ingredients)}
+
+👨‍🍳 **Instructions:**
+{result.output.instructions}
+
+⏱️ **Cooking Time:** {result.output.cooking_time}
+🎯 **Difficulty:** {result.output.difficulty}
+        """.strip()
+        
+        # Add inventory check
+        inventory_info = check_inventory_for_any_dish(dish, inventory)
+        
+        return f"{recipe_response}\n\n📦 **Inventory Status:**\n{inventory_info}"
+        
+    except Exception as e:
+        print(f"Gemini recipe generation failed: {e}")
+        # Fallback to original method
+        return await get_recipe_with_fallback(dish, user_text, inventory)
+
+async def analyze_inventory_with_gemini(user_text: str, inventory: Dict[str, int]) -> str:
+    """Analyze inventory using Gemini AI for better insights"""
+    agent = create_gemini_agent()
+    
+    if not agent:
+        # Fallback to original method
+        return analyze_inventory_query(user_text, inventory)
+    
+    try:
+        # Create inventory analysis prompt
+        prompt = dedent(f"""
+        You are a restaurant inventory manager. Analyze the following inventory query and provide insights.
+        
+        User Query: {user_text}
+        Current Inventory: {json.dumps(inventory, indent=2)}
+        
+        Please analyze the inventory and provide:
+        1. Available ingredients that match the query
+        2. Missing ingredients if a specific dish is mentioned
+        3. Low stock warnings
+        4. Professional recommendations for inventory management
+        
+        Focus on being helpful and actionable.
+        """)
+        
+        result = agent.run_sync(prompt, output_type=InventoryCheck)
+        
+        # Format the response
+        response_parts = []
+        
+        if result.output.available_ingredients:
+            response_parts.append(f"✅ **Available:** {', '.join(result.output.available_ingredients)}")
+        
+        if result.output.missing_ingredients:
+            response_parts.append(f"❌ **Missing:** {', '.join(result.output.missing_ingredients)}")
+        
+        if result.output.low_stock_ingredients:
+            response_parts.append(f"⚠️ **Low Stock:** {', '.join(result.output.low_stock_ingredients)}")
+        
+        if result.output.summary:
+            response_parts.append(f"📊 **Summary:** {result.output.summary}")
+        
+        return "\n".join(response_parts) if response_parts else "No inventory analysis available."
+        
+    except Exception as e:
+        print(f"Gemini inventory analysis failed: {e}")
+        return analyze_inventory_query(user_text, inventory)
+
+async def get_trending_analysis_with_gemini() -> str:
+    """Get trending analysis using Gemini AI"""
+    agent = create_gemini_agent()
+    
+    if not agent:
+        return get_trending_recipes()
+    
+    try:
+        # Get recent trending data
+        recent_trending = get_recent_trending(7)  # Last 7 days
+        
+        prompt = dedent(f"""
+        You are a restaurant industry analyst. Analyze the following trending data and provide insights.
+        
+        Recent Trending Dishes: {recent_trending if recent_trending else 'No trending data available'}
+        
+        Please provide:
+        1. Analysis of current food trends
+        2. Recommendations for menu planning
+        3. Seasonal considerations
+        4. Customer preference insights
+        
+        Make your analysis professional and actionable for restaurant management.
+        """)
+        
+        result = agent.run_sync(prompt, output_type=TrendingAnalysis)
+        
+        # Format the response
+        trending_response = f"""
+📈 **Restaurant Trends Analysis**
+
+🔥 **Popular Dishes:** {', '.join(result.output.popular_dishes) if result.output.popular_dishes else 'Based on recent data'}
+
+📊 **Trending Patterns:** {result.output.trending_patterns}
+
+💡 **Recommendations:** {result.output.recommendations}
+        """.strip()
+        
+        return trending_response
+        
+    except Exception as e:
+        print(f"Gemini trending analysis failed: {e}")
+        return get_trending_recipes()
+
 async def get_recipe_with_fallback(dish: str, user_text: str, inventory: Dict[str, int]):
     """Get recipe with web search fallback"""
     
@@ -497,7 +708,7 @@ async def get_recipe_with_fallback(dish: str, user_text: str, inventory: Dict[st
 
 # --- Main Logic ---
 async def restaurant_agent(user_text: str, inventory: Dict[str, int], is_audio: bool = False):
-    """Main restaurant agent function"""
+    """Main restaurant agent function with Gemini AI enhancement"""
     
     intent = classify_intent(user_text)
     dish = extract_dish_name(user_text)
@@ -509,25 +720,18 @@ async def restaurant_agent(user_text: str, inventory: Dict[str, int], is_audio: 
     if intent == "recipe_request":
         if dish:
             log_query(user_text, dish)
-            return await get_recipe_with_fallback(dish, user_text, inventory)
+            # Use Gemini-enhanced recipe generation
+            return await get_recipe_with_gemini(dish, user_text, inventory)
         else:
             return "I'd be happy to help you with a recipe! Could you please specify what dish you'd like to make? For example: 'How to make lemon juice' or 'Recipe for pizza'."
     
     elif intent == "inventory_check":
-        # First, try to answer about specific items in the inventory mentioned in the query
-        item_response = analyze_inventory_query(user_text, inventory)
-        # If we found concrete items, return that; otherwise, if a dish is specified, analyze dish ingredients
-        if item_response and not item_response.startswith("I couldn't find"):
-            return item_response
-        if dish:
-            return check_inventory_availability(dish, inventory)
-        # Fallback prompt
-        if db is not None and not inventory:
-            return "The inventory is currently empty."
-        return "Tell me which items or dish you want me to check in the inventory."
+        # Use Gemini-enhanced inventory analysis
+        return await analyze_inventory_with_gemini(user_text, inventory)
     
     elif intent == "trending_request":
-        return get_trending_recipes()
+        # Use Gemini-enhanced trending analysis
+        return await get_trending_analysis_with_gemini()
     
     elif intent == "general_query":
         return "I can help you with recipes, ingredient checks, and restaurant insights. What would you like to know?"
