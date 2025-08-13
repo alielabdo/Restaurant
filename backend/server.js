@@ -6,7 +6,7 @@ const authRoutes = require('./routes/authRoutes');
 const protectedRoutes = require('./routes/protectedRoutes');
 const ingredientRoutes = require('./routes/ingredientRoutes');
 const itemRoutes = require('./routes/itemRoutes');
-const orderRoutes = require('./routes/ordersRoutes');
+const orderRoutes = require('./routes/orderRoutes');
 const assistantRoutes = require('./routes/assistantRoutes'); //assistant route
 
 const app = express();

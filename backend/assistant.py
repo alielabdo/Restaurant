@@ -88,7 +88,7 @@ try:
     
     if not mongo_db_name:
         print("Warning: MONGO_DB not set, using default database")
-        mongo_db_name = "restaurant_db"
+        mongo_db_name = "test"
     
     mongo_client = MongoClient(mongo_uri, serverSelectionTimeoutMS=5000)
     # Test the connection
