@@ -6,6 +6,7 @@ const authRoutes = require('./routes/authRoutes');
 const protectedRoutes = require('./routes/protectedRoutes');
 const ingredientRoutes = require('./routes/ingredientRoutes');
 const itemRoutes = require('./routes/itemRoutes');
+const orderRoutes = require('./routes/ordersRoutes');
 const assistantRoutes = require('./routes/assistantRoutes'); //assistant route
 
 const app = express();
@@ -15,10 +16,10 @@ connectDB();
 app.use(cors());
 app.use(express.json());
 app.use('/api/ingredients', ingredientRoutes);
-app.use('/api/ingredients', ingredientRoutes);
 app.use('/api/items', itemRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/protected', protectedRoutes);
+app.use('/api/orders', orderRoutes);
 app.use('/api/assistant', assistantRoutes); //assistant route
 app.get('/', (req, res) => {
   res.send('Restaurant API is running ');
